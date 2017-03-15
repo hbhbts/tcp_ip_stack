@@ -1,4 +1,4 @@
-//tcp_ip_top function 
+//tcp_ip_top function
 
 #include "ap_int.h"
 #include "hls_stream.h"

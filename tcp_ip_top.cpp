@@ -27,17 +27,17 @@ void tcp_ip_top(stream<axis_word_t> rx_data, stream<axis_word_t> tx_data) {
 
     rx_mac_decode(rx_data, rx_arp_data, rx_ip_data);
     rx_ip_decode(rx_ip_data, rx_icmp_data, rx_expired_data, rx_udp_valid, rx_udp_pseudo, rx_udp_data, dchp_ip_addr);
-    arp_server(rx_arp_data, ip_query, ip_query_resp, tx_arp_data, dchp_ip_addr);
+    arp_server(rx_arp_data, ip_query, ip_query_rsp, tx_arp_data, dchp_ip_addr);
     icmp_handle(rx_icmp_data, rx_expired_data, rx_udp_unreachable, tx_icmp_data);
-    udp_rx_handle(rx_udp_valid, rx_udp_pseudo, rx_udp_data, open_port, open_port_resp, release_port, in_udp_socket, in_udp_data, rx_udp_unreachable);
+    udp_rx_handle(rx_udp_valid, rx_udp_pseudo, rx_udp_data, open_port, open_port_rsp, release_port, in_udp_socket, in_udp_data, rx_udp_unreachable);
     tx_ip_encode(out_socket, out_udp_data, out_udp_len, tx_icmp_data, tx_ip_data, tx_ip_checksum, dchp_ip_addr);
-    tx_mac_encode(tx_ip_data, tx_ip_checksum, tx_arp_data, ip_query, ip_query_resp, tx_data);
-    udp_msg_mux(open_port, open_port_resp, release_port, in_socket, in_udp_data, out_socket, out_udp_data, out_udp_len, 
-                dchp_open_port, dchp_open_port_resp, dchp_release_port, dchp_in_socket, dchp_in_udp_data, dchp_out_socket, dchp_out_udp_data, dchp_out_udp_len,
-                ulb_open_port, ulb_open_port_resp, ulb_release_port, ulb_in_socket, ulb_in_udp_data, ulb_out_socket, ulb_out_udp_data, ulb_out_udp_len);
+    tx_mac_encode(tx_ip_data, tx_ip_checksum, tx_arp_data, ip_query, ip_query_rsp, tx_data);
+    udp_msg_mux(open_port, open_port_rsp, release_port, in_socket, in_udp_data, out_socket, out_udp_data, out_udp_len, 
+                dchp_open_port, dchp_open_port_rsp, dchp_release_port, dchp_in_socket, dchp_in_udp_data, dchp_out_socket, dchp_out_udp_data, dchp_out_udp_len,
+                ulb_open_port, ulb_open_port_rsp, ulb_release_port, ulb_in_socket, ulb_in_udp_data, ulb_out_socket, ulb_out_udp_data, ulb_out_udp_len);
     dchp_server(dchp_ip_addr, 
-                dchp_open_port, dchp_open_port_resp, dchp_release_port, dchp_in_socket, dchp_in_udp_data, dchp_out_socket, dchp_out_udp_data, dchp_out_udp_len);
-    udp_loopback(ulb_open_port, ulb_open_port_resp, ulb_release_port, ulb_in_socket, ulb_in_udp_data, ulb_out_socket, ulb_out_udp_data, ulb_out_udp_len, dchp_ip_addr);
+                dchp_open_port, dchp_open_port_rsp, dchp_release_port, dchp_in_socket, dchp_in_udp_data, dchp_out_socket, dchp_out_udp_data, dchp_out_udp_len);
+    udp_loopback(ulb_open_port, ulb_open_port_rsp, ulb_release_port, ulb_in_socket, ulb_in_udp_data, ulb_out_socket, ulb_out_udp_data, ulb_out_udp_len, dchp_ip_addr);
     global_timer(tick_100ms);
 }
 
@@ -132,7 +132,7 @@ void rx_mac_decode(stream<axis_word_t> rx_data, stream<axis_word_t> rx_arp_data,
 
 
 void rx_ip_decode(stream<axis_word_t> rx_ip_data, stream<axis_word_t> rx_icmp_data, stream<axis_word_t> rx_expired_data,
-                    stream<ap_uint<1> > rx_udp_valid, stream<axis_word_t> rx_udp_pseudo, stream<axis_word_t> rx_udp_data,
+                    stream<ap_uint<1> > rx_udp_valid, stream<udp_psd_t > rx_udp_pseudo, stream<axis_word_t> rx_udp_data,
                     ap_uint<32> dchp_ip_addr) {
 #pragma HLS inline off
 #pragma HLS interface ap_stable port=dchp_ip_addr
@@ -147,6 +147,8 @@ void rx_ip_decode(stream<axis_word_t> rx_ip_data, stream<axis_word_t> rx_icmp_da
     static ap_uint<8> ttl;
     static ap_uint<8> protocol;
     static ap_uint<16> ip_checksum;
+    static ap_uint<17> pseudo_checksum;
+    static ap_uint<32> src_ip_addr;
     static ap_uint<32> dst_ip_addr;
     static axis_word_t curr_word;
     static axis_word_t prev_word;
@@ -170,7 +172,9 @@ void rx_ip_decode(stream<axis_word_t> rx_ip_data, stream<axis_word_t> rx_icmp_da
                 flags = curr_word.data(23, 21);
                 offset(12, 8) = curr_word.data(20, 16);
                 offset(7, 0) = curr_word.data(31, 24);
-                calc_checksum = curr_word.data(31, 16) + curr_word.data(15, 0);
+                calc_checksum = calc_checksum + curr_word.data(15, 0);
+                calc_checksum = calc_checksum(15, 0) + calc_checksum.bit(16);
+                calc_checksum = calc_checksum + curr_word.data(31, 16);
                 calc_checksum = calc_checksum(15, 0) + calc_checksum.bit(16);
                 ihl --;
                 rid_state ++;
@@ -182,7 +186,9 @@ void rx_ip_decode(stream<axis_word_t> rx_ip_data, stream<axis_word_t> rx_icmp_da
                 ttl = curr_word.data(7, 0);
                 protocol = curr_word.data(15, 8);
                 ip_checksum = byte_swap16(curr_word.data(31, 16));
-                calc_checksum = curr_word.data(31, 16) + curr_word.data(15, 0);
+                calc_checksum = calc_checksum + curr_word.data(15, 0);
+                calc_checksum = calc_checksum(15, 0) + calc_checksum.bit(16);
+                calc_checksum = calc_checksum + curr_word.data(31, 16);
                 calc_checksum = calc_checksum(15, 0) + calc_checksum.bit(16);
                 ihl --;
                 rid_state ++;
@@ -191,8 +197,12 @@ void rx_ip_decode(stream<axis_word_t> rx_ip_data, stream<axis_word_t> rx_icmp_da
         case RID_R3:
             if(!rx_ip_data.empty()) {
                 curr_word = rx_ip_data.read();
-                rx_udp_pseudo.write(curr_word.data);
-                calc_checksum = curr_word.data(31, 16) + curr_word.data(15, 0);
+                src_ip_addr = byte_swap32(curr_word.data);
+                pseudo_checksum = curr_word.data(15, 0) + curr_word.data(31, 16);
+                pseudo_checksum = pseudo_checksum(15, 0) + pseudo_checksum.bit(16);
+                calc_checksum = calc_checksum + curr_word.data(15, 0);
+                calc_checksum = calc_checksum(15, 0) + calc_checksum.bit(16);
+                calc_checksum = calc_checksum + curr_word.data(31, 16);
                 calc_checksum = calc_checksum(15, 0) + calc_checksum.bit(16);
                 ihl --;
                 rid_state ++;
@@ -202,8 +212,13 @@ void rx_ip_decode(stream<axis_word_t> rx_ip_data, stream<axis_word_t> rx_icmp_da
             if(!rx_ip_data.empty()) {
                 curr_word = rx_ip_data.read();
                 dst_ip_addr = byte_swap32(curr_word.data);
-                rx_udp_pseudo.write(curr_word.data);
-                calc_checksum = curr_word.data(31, 16) + curr_word.data(15, 0);
+                pseudo_checksum = pseudo_checksum + curr_word.data(15, 0);
+                pseudo_checksum = pseudo_checksum(15, 0) + pseudo_checksum.bit(16);
+                pseudo_checksum = pseudo_checksum + curr_word.data(31, 16);
+                pseudo_checksum = pseudo_checksum(15, 0) + pseudo_checksum.bit(16);
+                calc_checksum = calc_checksum + curr_word.data(15, 0);
+                calc_checksum = calc_checksum(15, 0) + calc_checksum.bit(16);
+                calc_checksum = calc_checksum + curr_word.data(31, 16);
                 calc_checksum = calc_checksum(15, 0) + calc_checksum.bit(16);
                 ihl --;
                 if(ihl == 0) {
@@ -217,7 +232,9 @@ void rx_ip_decode(stream<axis_word_t> rx_ip_data, stream<axis_word_t> rx_icmp_da
         case RID_SKIP:
             if(!rx_ip_data.empty()) {
                 rx_ip_data.read();
-                calc_checksum = curr_word.data(31, 16) + curr_word.data(15, 0);
+                calc_checksum = calc_checksum + curr_word.data(15, 0);
+                calc_checksum = calc_checksum(15, 0) + calc_checksum.bit(16);
+                calc_checksum = calc_checksum + curr_word.data(31, 16);
                 calc_checksum = calc_checksum(15, 0) + calc_checksum.bit(16);
                 calc_checksum = ~calc_checksum;
                 ihl --;
@@ -234,7 +251,14 @@ void rx_ip_decode(stream<axis_word_t> rx_ip_data, stream<axis_word_t> rx_icmp_da
                 temp.data(15, 8) = protocol;
                 temp.data(15, 8) = total_length(7, 0);
                 temp.data(7, 0) = total_length(15, 8);
-                rx_udp_pseudo.write(temp);
+                pseudo_checksum = pseudo_checksum + temp.data(15, 0);
+                pseudo_checksum = pseudo_checksum(15, 0) + pseudo_checksum.bit(16);
+                pseudo_checksum = pseudo_checksum + temp.data(31, 16);
+                pseudo_checksum = pseudo_checksum(15, 0) + pseudo_checksum.bit(16);
+                udp_pst_t pst_tmp;
+                pst_tmp.ip = src_ip_addr;
+                pst_tmp.checksum = pseudo_checksum;
+                rx_udp_pseudo.write(pst_tmp);
                 no_drop = version == 4 && !flags && !offset && (dst_ip_addr == dchp_ip_addr || dst_ip_addr == broadcast_ip_addr) && calc_checksum == 0;
                 if(!no_drop)
                     rid_state = RID_DROP;
@@ -345,7 +369,7 @@ void rx_arp_handle(stream<axis_word_t> rx_arp_data, stream<arp_cache_t> update_a
     }
 }
 
-void arp_cache(stream<arp_cache_t> update_arp_cache, stream<ap_uint<32> > ip_query, stream<query_resp_t> ip_query_resp, stream<arp_cache_t> send_arp_request) {
+void arp_cache(stream<arp_cache_t> update_arp_cache, stream<ap_uint<32> > ip_query, stream<query_rsp_t> ip_query_rsp, stream<arp_cache_t> send_arp_request) {
 #pragma HLS inline off
 #pragma HLS pipeline II=1 enable_flush
     ap_uint<48+32-ARP_CACHE_SIZE> cache [ARP_CACHE_NUM];
@@ -362,7 +386,7 @@ void arp_cache(stream<arp_cache_t> update_arp_cache, stream<ap_uint<32> > ip_que
         cache[index] = entry;        
     }
     else if(!ip_query.empty()) {
-        query_resp_t rsp = query_resp_t(0, 0); 
+        query_rsp_t rsp = query_rsp_t(0, 0); 
         ip = ip_query.read();
         index = ip(ARP_CACHE_SIZE-1, 0);
         entry = cache[index];
@@ -370,7 +394,7 @@ void arp_cache(stream<arp_cache_t> update_arp_cache, stream<ap_uint<32> > ip_que
             rsp.hit = 1;
             rsp.mac = entry(48+31-ARP_CACHE_SIZE, 32-ARP_CACHE_SIZE);
         }
-        ip_query_resp.write(rsp);
+        ip_query_rsp.write(rsp);
         if(!rsp.hit) {
             cache_temp.mac = broadcast_mac_addr;
             cache_temp.ip = ip;
@@ -383,13 +407,172 @@ void arp_mux(stream<arp_cache_t> send_arp_reply, stream<arp_cache_t> send_arp_re
 #pragma HLS inline off
 #pragma HLS pipeline II=1 enable_flush 
 
+    static int am_state = 0;
+    static arp_cache_t req;
+    static ap_uint<1> is_reply;
+    static axis_word_t temp;
+
+    switch(am_state) {
+        case 0:
+            if(!send_arp_reply.empty() || !send_arp_request.empty()) {
+                if(!send_arp_reply.empty()) {
+                    req = send_arp_reply.read();
+                    is_reply = 1;
+                }
+                else {
+                    req = send_arp_request.read();
+                    is_reply = 0;
+                }
+                am_state ++;
+            }
+            break;
+        case 1:
+            temp.data(15, 0) = byte_swap16(0x0001);
+            temp.data(31, 16) = byte_swap16(0x0800);
+            tx_arp_data.write(temp);
+            am_state ++;
+            break;
+        case 2:
+            temp.data(7, 0) = 6;
+            temp.data(15, 8) = 4;
+            if(is_reply)
+                temp.data(31, 16) = 2;
+            else
+                temp.data(31, 16) = 1;
+            tx_arp_data.write(temp);
+            am_state ++;
+            break;
+        case 3:
+            temp.data = byte_swap32(local_mac_addr(47, 16);
+            tx_arp_data.write(temp);
+            am_state ++;
+            break;
+        case 4:
+            temp.data(15, 0) = byte_swap16(local_mac_addr(15, 0));
+            temp.data(31, 16) = byte_swap16(dchp_ip_addr(31, 16));
+            tx_arp_data.write(temp);
+            am_state ++;
+            break;
+        case 5:
+            temp.data(15, 0) = byte_swap16(dchp_ip_addr(15, 0));
+            temp.data(31, 16) = byte_swap16(req.mac(47, 32));
+            tx_arp_data.write(temp);
+            am_state ++;
+            break;
+        case 6:
+            temp.data = byte_swap32(req.mac(31, 0));
+            tx_arp_data.write(temp);
+            am_state ++;
+            break;
+        case 7:
+            temp.data = byte_swap32(req.ip);
+            temp.last = 1;
+            tx_arp_data.write(temp);
+            am_state = 0;
+            break;
+    }
 }
 
-void arp_server(stream<axis_word_t> rx_arp_data, stream<ap_uint<32> > ip_query, stream<query_resp_t> ip_query_resp, stream<axis_word_t> tx_arp_data, ap_uint<32> dchp_ip_addr) {
+void arp_server(stream<axis_word_t> rx_arp_data, stream<ap_uint<32> > ip_query, stream<query_rsp_t> ip_query_rsp, stream<axis_word_t> tx_arp_data, ap_uint<32> dchp_ip_addr) {
 #pragma HLS inline
 
     rx_arp_handle(rx_arp_data, update_arp_cache, send_arp_reply, dchp_ip_addr);
-    arp_cache(update_arp_cache, ip_query, ip_query_resp, send_arp_request);
+    arp_cache(update_arp_cache, ip_query, ip_query_rsp, send_arp_request);
     arp_mux(send_arp_reply, send_arp_request, dchp_ip_addr, tx_arp_data);
 
 }
+
+void rx_udp_verify(stream<ap_uint<1> > rx_udp_valid, stream<udp_pst_t > rx_udp_pseudo, stream<axis_word_t> rx_udp_data,
+        stream<ap_uint<17> > calc_checksum, stream<connection_t> rx_udp_cnn, sream<axis_word_t> verify_stream, ap_uint<32> dhcp_ip_addr) {
+#pragma HLS inline off
+#pragma HLS pipeline enable_flush
+    static enum ruv_state_e {IDLE=0, DROP_PSEUDO, READ_PSEUDO, UDP_HEADER, UDP_HEAFER2, DROP_UDP, UDP_DATA} ruv_state = 0;
+    static udp_pst_t pst_tmp;
+    static ap_uint<17> pseudo_checksum;
+    static axis_word_t temp;
+    static ap_uint<16> src_port;
+    static ap_uint<16> dst_port;
+    static ap_uint<16> length;
+    static ap_uint<16> checksum;
+    
+    
+    switch(ruv_state) {
+        case IDLE:
+            if(!rx_udp_valid.empty()) {
+                if(rx_udp_valid.data == 0)
+                    ruv_state = DROP_PSEUDO;
+                else
+                    ruv_state = READ_PSEUDO;
+            }
+            break;
+        case DROP_PSEUDO:
+            rx_udp_pseudo.read();
+            ruv_state = IDLE;
+            break;
+        case READ_PSEUDO:
+            if(!rx_udp_pseudo.empty()) {
+                pst_tmp = rx_udp_pseudo.read();
+                pseudo_checksum = pst_tmp.checksum;
+                ruv_state = UDP_HEADER;
+            }
+            break;
+        case UDP_HEADER:
+            if(!rx_udp_data.empty()) {
+                temp = rx_udp_data.read();
+                src_port = byte_swap16(temp.data(15, 0));
+                dst_port = byte_swap16(temp.data(31, 16));
+                pseudo_checksum = pseudo_checksum + temp.data(15, 0);
+                pseudo_checksum = pseudo_checksum(15, 0) + pseudo_checksum.bit(16);
+                pseudo_checksum = pseudo_checksum + temp.data(31, 16);
+                pseudo_checksum = pseudo_checksum(15, 0) + pseudo_checksum.bit(16);
+                ruv_state = UDP_HEAFER2;
+            }
+            break;
+        case UDP_HEADER2:
+            if(!rx_udp_data.empty()) {
+                temp = rx_udp_data.read();
+                length = temp.data(15, 0);
+                checksum = temp.data(31, 16);
+                pseudo_checksum = pseudo_checksum + temp.data(15, 0);
+                pseudo_checksum = pseudo_checksum(15, 0) + pseudo_checksum.bit(16);
+                pseudo_checksum = pseudo_checksum + temp.data(31, 16);
+                pseudo_checksum = pseudo_checksum(15, 0) + pseudo_checksum.bit(16);
+                pseudo_checksum = ~pseudo_checksum;
+                calc_checksum.write(pseudo_checksum);
+                connection_t cnn_tmp;
+                cnn_tmp.src_ip = pst_tmp.ip;
+                cnn_tmp.src_port = src_port;
+                cnn_tmp.dst_ip = dhcp_ip_addr;
+                cnn_tmp.dst_port = dst_port;
+                rx_udp_cnn.write(cnn_tmp);
+                if(temp.last)
+                    ruv_state = IDLE;
+                else
+                    ruv_state = UDP_DATA;
+            }
+            break;
+        case UDP_DATA:
+            if(!rx_udp_data.empty()) {
+                temp = rx_udp_data.read();
+                verify_stream.write(temp);
+                if(temp.last)
+                    ruv_state = IDLE;
+            }
+            break;
+    }
+}
+
+void udp_port_mng(stream<ap_uint<16> > port_status_req, stream<ap_uint<1> > port_status_rsp, stream<ap_uint<16> > open_port,
+                    stream<ap_uint<1> > open_port_rsp, stream<ap_uint<16> > release_port) {
+    
+}
+
+void udp_rx_handle(stream<ap_uint<1> > rx_udp_valid, stream<axis_word_t> rx_udp_pseudo, stream<axis_word_t> rx_udp_data, stream<ap_uint<16> > open_port, stream<ap_uint<1> > open_port_rsp,
+        stream<ap_uint<16> > release_port, stream<connection_t> in_udp_cnn, stream<axis_word_t> in_udp_data, stream<axis_word_t> rx_udp_unreachable) {
+#pragma HLS inline
+
+    rx_udp_verify(rx_udp_valid, rx_udp_pseudo, rx_udp_data, calc_checksum, connection, verify_stream);
+    udp_decode(calc_checksum, connection, verify_stream, port_status_req, port_status_rsp, rx_udp_unreachable, in_udp_cnn, in_udp_data);
+    udp_port_mng(port_status_req, port_status_rsp, open_port, open_port_rsp, release_port);
+}
+
